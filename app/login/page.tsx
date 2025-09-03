@@ -9,8 +9,18 @@ export default function LoginPage() {
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    // TODO: /api/auth/login 연동 예정
-    alert(`로그인 시도: ${email}`);
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (res.ok) {
+      alert('로그인 성공');
+      location.href = '/posts';
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data?.message || '로그인 실패');
+    }
   }
 
   return (
