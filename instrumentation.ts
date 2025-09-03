@@ -1,34 +1,60 @@
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
-import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { registerInstrumentations } from '@opentelemetry/instrumentation';
+import { TraceIdRatioBasedSampler } from '@opentelemetry/sdk-trace-base';
 
-// 10% 샘플링 (10번에 1번)
-const sdk = new NodeSDK({
-  traceExporter: new OTLPTraceExporter({
-    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/traces',
-  }),
-  metricReader: new PeriodicExportingMetricReader({
-    exporter: new OTLPMetricExporter({
-      url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/metrics',
-    }),
-    exportIntervalMillis: 10000,
-  }),
-  instrumentations: [
-    getNodeAutoInstrumentations({
-      '@opentelemetry/instrumentation-fs': {
-        enabled: false, // 파일시스템 추적 비활성화
-      },
-    }),
-  ],
-  // 10% 샘플링 설정
-  sampler: {
-    shouldSample: () => {
-      return Math.random() < 0.1; // 10% 확률로 샘플링
-    },
-  },
+const exporter = new OTLPTraceExporter({
+  url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/traces',
+  headers: {},
+  concurrencyLimit: 10,
 });
 
-sdk.start();
-console.log('OpenTelemetry initialized with 10% sampling');
+const provider = new NodeTracerProvider({
+  resource: resourceFromAttributes({
+    [ATTR_SERVICE_NAME]: process.env.PROJECT_NAME || "gitlab-demo-app",
+  }),
+  spanProcessors: [new SimpleSpanProcessor(exporter)],
+  // 10% 샘플링 설정
+  sampler: new TraceIdRatioBasedSampler(0.1),
+});
+
+// Initialize the OpenTelemetry APIs to use the NodeTracerProvider bindings
+provider.register();
+
+registerInstrumentations({
+  instrumentations: [
+    new HttpInstrumentation({
+      ignoreIncomingRequestHook: (req) => {
+        const url = req.url || '';
+        return (
+          url.startsWith('/_next/') ||
+          url.startsWith('/static/') ||
+          url.endsWith('.png') ||
+          url.endsWith('.jpg') ||
+          url.endsWith('.jpeg') ||
+          url.endsWith('.ico')
+        );
+      },
+      // 요청 경로와 메서드를 스팬에 추가
+      requestHook: (span, request) => {
+        const method = request.method || 'UNKNOWN';
+        const url = request.url || '';
+        
+        // 스팬 이름 업데이트 (METHOD + URL 형식으로)
+        span.updateName(`${method} ${url}`);
+        
+        // 추가 속성으로 요청 정보 저장
+        span.setAttribute('http.method', method);
+        span.setAttribute('http.url', url);
+        span.setAttribute('http.route', url.split('?')[0]);
+      }
+    }),
+  ],
+});
+
+console.log(`OpenTelemetry initialized with 10% sampling for project: ${process.env.PROJECT_NAME || "gitlab-demo-app"}`);
+
