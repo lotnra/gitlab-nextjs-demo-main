@@ -3,7 +3,7 @@ MONGODB_DB=app
 JWT_SECRET=change-this-to-a-long-random-string
 
 # 오픈텔레메트리 설정
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 OTEL_SERVICE_NAME=gitlab-demo-app
 OTEL_SERVICE_VERSION=1.0.0
 OTEL_RESOURCE_ATTRIBUTES=service.name=gitlab-demo-app,service.version=1.0.0
