@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import clientPromise from '@/lib/mongodb';
+import clientPromise from '@/lib/database';
 import bcrypt from 'bcryptjs';
 import { signToken } from '@/lib/auth';
 
