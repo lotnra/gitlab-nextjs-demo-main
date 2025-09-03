@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import clientPromise from '@/lib/mongodb';
+import clientPromise from '@/lib/database';
 import { getUserFromRequest } from '@/lib/auth';
 
 // 게시글 목록 조회
