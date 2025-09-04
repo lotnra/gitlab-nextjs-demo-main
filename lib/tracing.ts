@@ -2,6 +2,8 @@ import { trace } from '@opentelemetry/api';
 
 const tracer = trace.getTracer('gitlab-demo-app');
 
+export { trace }; // trace를 export 추가
+
 export function createSpan(name: string, fn: (span: any) => Promise<any>) {
   return tracer.startActiveSpan(name, async (span) => {
     try {
