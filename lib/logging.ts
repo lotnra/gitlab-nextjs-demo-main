@@ -4,37 +4,6 @@ import { trace } from './tracing';
 import fs from 'fs';
 import path from 'path';
 
-// ---- OTLP Logs (선택적) ----
-let otelEmit: ((level: string, message: string, attrs?: Record<string, any>) => void) | null = null;
-
-(function initOtelLogs() {
-  if (process.env.OTEL_LOGS_ENABLE !== 'true') return;
-  try {
-    const { LoggerProvider, logs, BatchLogRecordProcessor } = require('@opentelemetry/sdk-logs');
-    const { OTLPLogExporter } = require('@opentelemetry/exporter-logs-otlp-http');
-    const { Resource } = require('@opentelemetry/resources');
-    const { ATTR_SERVICE_NAME } = require('@opentelemetry/semantic-conventions');
-
-    const endpoint = process.env.OTEL_LOGS_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318';
-    const exporter = new OTLPLogExporter({ url: `${endpoint.replace(/\/$/, '')}/v1/logs` });
-
-    const provider = new LoggerProvider({
-      resource: new Resource({
-        [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME || 'gitlab-demo-app',
-      }),
-    });
-    provider.addLogRecordProcessor(new BatchLogRecordProcessor(exporter));
-    logs.setGlobalLoggerProvider(provider);
-    const otelLogger = logs.getLogger('gitlab-demo-app');
-
-    otelEmit = (level, message, attrs) => {
-      otelLogger.emit({ body: message, attributes: { level, ...attrs } });
-    };
-  } catch {
-    otelEmit = null;
-  }
-})();
-
 // ---- Pino: 파일 로깅 설정 ----
 function ensureDirectoryExists(dirPath: string) {
   if (!fs.existsSync(dirPath)) {
@@ -65,7 +34,6 @@ export const log = {
     const spanId = span?.spanContext().spanId;
 
     logger.debug({ traceId, spanId, ...extra }, message);
-    otelEmit?.('debug', message, { traceId, spanId, ...extra });
   },
 
   info: (message: string, extra?: Record<string, any>) => {
@@ -74,7 +42,6 @@ export const log = {
     const spanId = span?.spanContext().spanId;
 
     logger.info({ traceId, spanId, ...extra }, message);
-    otelEmit?.('info', message, { traceId, spanId, ...extra });
   },
 
   warn: (message: string, extra?: Record<string, any>) => {
@@ -83,7 +50,6 @@ export const log = {
     const spanId = span?.spanContext().spanId;
 
     logger.warn({ traceId, spanId, ...extra }, message);
-    otelEmit?.('warn', message, { traceId, spanId, ...extra });
   },
 
   error: (message: string, error?: Error, extra?: Record<string, any>) => {
@@ -97,14 +63,6 @@ export const log = {
       error: error ? { name: error.name, message: error.message, stack: error.stack } : undefined,
       ...extra,
     }, message);
-
-    otelEmit?.('error', message, {
-      traceId,
-      spanId,
-      error_name: error?.name,
-      error_message: error?.message,
-      ...extra,
-    });
   },
 };
 
