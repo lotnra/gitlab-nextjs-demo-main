@@ -1,26 +1,16 @@
 import pino from 'pino';
 import { trace } from './tracing'; // tracing.ts에서 import
+import type { Span } from '@opentelemetry/api';
 
 // Pino 로거 인스턴스 생성
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
   formatters: {
-    level: (label) => {
+    level: (label: string) => {
       return { level: label };
     },
   },
   timestamp: pino.stdTimeFunctions.isoTime,
-  // 개발 환경에서는 pretty print 사용
-  ...(process.env.NODE_ENV === 'development' && {
-    transport: {
-      target: 'pino-pretty',
-      options: {
-        colorize: true,
-        translateTime: 'SYS:standard',
-        ignore: 'pid,hostname',
-      },
-    },
-  }),
 });
 
 // 트레이스 컨텍스트와 연동된 로깅 함수들
@@ -105,7 +95,7 @@ export function withLogging<T>(
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const requestLogger = createRequestLogger(requestId);
   
-  return trace.getTracer('gitlab-demo-app').startActiveSpan(operation, async (span) => {
+  return trace.getTracer('gitlab-demo-app').startActiveSpan(operation, async (span: Span) => {
     try {
       requestLogger.info(`Starting ${operation}`);
       const result = await fn(requestLogger);
