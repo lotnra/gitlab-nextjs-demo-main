@@ -14,12 +14,12 @@ let otelEmit: ((level: string, message: string, attrs?: Record<string, any>) => 
     const { Resource } = require('@opentelemetry/resources');
     const { ATTR_SERVICE_NAME } = require('@opentelemetry/semantic-conventions');
 
-    const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318';
+    const endpoint = process.env.OTEL_LOGS_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318';
     const exporter = new OTLPLogExporter({ url: `${endpoint.replace(/\/$/, '')}/v1/logs` });
 
     const provider = new LoggerProvider({
       resource: new Resource({
-        [ATTR_SERVICE_NAME]: process.env.PROJECT_NAME || 'gitlab-demo-app',
+        [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME || 'gitlab-demo-app',
       }),
     });
     provider.addLogRecordProcessor(new BatchLogRecordProcessor(exporter));
