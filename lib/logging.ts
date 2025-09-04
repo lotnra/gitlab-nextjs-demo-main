@@ -1,7 +1,8 @@
 // logging.ts (단일 파일 통합 예시)
 import pino from 'pino';
 import { trace } from './tracing';
-import type { Span } from '@opentelemetry/api';
+import fs from 'fs';
+import path from 'path';
 
 // ---- OTLP Logs (선택적) ----
 let otelEmit: ((level: string, message: string, attrs?: Record<string, any>) => void) | null = null;
@@ -34,14 +35,28 @@ let otelEmit: ((level: string, message: string, attrs?: Record<string, any>) => 
   }
 })();
 
-// ---- Pino ----
+// ---- Pino: 파일 로깅 설정 ----
+function ensureDirectoryExists(dirPath: string) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+const logDirectory = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
+const logFileName = process.env.LOG_FILE || 'app.log';
+const logFilePath = path.join(logDirectory, logFileName);
+
+ensureDirectoryExists(logDirectory);
+
+const destination = pino.destination({ dest: logFilePath, sync: false });
+
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
   formatters: {
     level: (label: string) => ({ level: label }),
   },
   timestamp: pino.stdTimeFunctions.isoTime,
-});
+}, destination);
 
 export const log = {
   debug: (message: string, extra?: Record<string, any>) => {
@@ -109,7 +124,7 @@ export async function withLogging<T>(
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const requestLogger = createRequestLogger(requestId);
 
-  return trace.getTracer('gitlab-demo-app').startActiveSpan(operation, async (span: Span) => {
+  return trace.getTracer('gitlab-demo-app').startActiveSpan(operation, async (span) => {
     try {
       requestLogger.info(`Starting ${operation}`);
       const result = await fn(requestLogger);
