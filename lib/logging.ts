@@ -31,6 +31,7 @@ const logger = pino({
 const LOKI_URL = process.env.LOKI_URL || 'http://localhost:3100/loki/api/v1/push';
 const LOKI_APP = process.env.LOKI_APP || 'gitlab-nextjs-demo';
 const LOKI_ENV = process.env.LOKI_ENV || process.env.NODE_ENV || 'development';
+const LOKI_JOB = process.env.LOKI_JOB || LOKI_APP; // ← 누락된 정의 추가
 const LOKI_USERNAME = process.env.LOKI_USERNAME;
 const LOKI_PASSWORD = process.env.LOKI_PASSWORD;
 
@@ -96,9 +97,10 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
     const labels: Record<string, string> = {
       job: LOKI_JOB,
       level,
+      app: LOKI_APP,   // 옵션
+      env: LOKI_ENV,   // 옵션
     };
     if (traceId) labels['trace_id'] = traceId;
-
     const fields = { ...(extra || {}) };
     if (traceId && !fields.traceId) {
       fields.traceId = traceId; // 라인 내용에도 포함(검색/가시성 향상용)
