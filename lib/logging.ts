@@ -52,25 +52,52 @@ function nowInNano(): string {
 // tracer 또는 extra에서 traceId 추출
 function extractTraceId(extra?: Record<string, any>): string | undefined {
   if (!extra) return undefined;
-  if (typeof extra.traceId === 'string') return extra.traceId;
-  const tracer = (extra as any).tracer;
+
+  // direct fields
+  if (typeof extra.traceId === 'string' && extra.traceId) return extra.traceId;
+  if (typeof (extra as any).traceID === 'string') return (extra as any).traceID;
+  if (typeof (extra as any).trace_id === 'string') return (extra as any).trace_id;
+
+  // headers object 내에서 찾기
+  const headers = (extra as any).headers || (extra as any).req?.headers;
+  const fromHeaders = (k: string) => headers?.[k] || headers?.[k.toLowerCase()];
+  const hTraceId = fromHeaders?.('traceid') || fromHeaders?.('x-trace-id') || fromHeaders?.('x-b3-traceid');
+  if (typeof hTraceId === 'string' && hTraceId) return hTraceId;
+
+  // W3C traceparent: version-traceid-spanid-flags
+  const traceparent = (extra as any).traceparent || fromHeaders?.('traceparent');
+  if (typeof traceparent === 'string') {
+    const parts = traceparent.split('-');
+    if (parts.length >= 2 && /^[0-9a-f]{16,32}$/i.test(parts[1])) return parts[1];
+  }
+
+  // B3 single header: traceid-spanid-sampled-...
+  const b3 = (extra as any).b3 || fromHeaders?.('b3');
+  if (typeof b3 === 'string') {
+    const tid = b3.split('-')[0];
+    if (tid && /^[0-9a-f]{16,32}$/i.test(tid)) return tid;
+  }
+
+  // 호환: tracer 객체가 있으면 시도
   try {
+    const tracer = (extra as any).tracer;
     const span = tracer?.getActiveSpan?.();
     const tid = span?.spanContext?.().traceId;
-    if (typeof tid === 'string' && tid.length > 0) return tid;
-  } catch (_) {}
+    if (typeof tid === 'string' && tid) return tid;
+  } catch {}
+
   return undefined;
 }
 
 async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
   try {
-    const traceId = extractTraceId(extra) || 'unknown';
+    const traceId = extractTraceId(extra);
 
     const labels: Record<string, string> = {
       job: LOKI_JOB,
       level,
-      trace_id: traceId, // 항상 라벨 포함
     };
+    if (traceId) labels['trace_id'] = traceId;
 
     const fields = { ...(extra || {}) };
     if (traceId && !fields.traceId) {
@@ -128,12 +155,12 @@ export const log = {
   },
 };
 
-export function createRequestLogger(requestId: string, userId?: string) {
+export function createRequestLogger(requestId: string, userId?: string, traceId?: string) {
   return {
-    debug: (m: string, e?: Record<string, any>) => log.debug(m, { requestId, userId, ...e }),
-    info: (m: string, e?: Record<string, any>) => log.info(m, { requestId, userId, ...e }),
-    warn: (m: string, e?: Record<string, any>) => log.warn(m, { requestId, userId, ...e }),
-    error: (m: string, err?: Error, e?: Record<string, any>) => log.error(m, err, { requestId, userId, ...e }),
+    debug: (m: string, e?: Record<string, any>) => log.debug(m, { requestId, userId, traceId, ...e }),
+    info:  (m: string, e?: Record<string, any>) => log.info(m,  { requestId, userId, traceId, ...e }),
+    warn:  (m: string, e?: Record<string, any>) => log.warn(m,  { requestId, userId, traceId, ...e }),
+    error: (m: string, err?: Error, e?: Record<string, any>) => log.error(m, err, { requestId, userId, traceId, ...e }),
   };
 }
 
