@@ -63,6 +63,17 @@ function extractTraceId(extra?: Record<string, any>): string | undefined {
   return undefined;
 }
 
+function getAuthHeaders() {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (LOKI_BEARER_TOKEN) {
+    headers['Authorization'] = `Bearer ${LOKI_BEARER_TOKEN}`;
+  } else if (LOKI_USERNAME && LOKI_PASSWORD) {
+    const token = Buffer.from(`${LOKI_USERNAME}:${LOKI_PASSWORD}`).toString('base64');
+    headers['Authorization'] = `Basic ${token}`;
+  }
+  return headers;
+}
+
 async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
   try {
     const traceId = extractTraceId(extra);
@@ -95,10 +106,6 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
 
     await axios.post(LOKI_URL, body, {
       headers: getAuthHeaders(),
-      auth: !LOKI_BEARER_TOKEN && LOKI_USERNAME && LOKI_PASSWORD ? {
-        username: LOKI_USERNAME,
-        password: LOKI_PASSWORD,
-      } : undefined,
       timeout: 2000,
       validateStatus: () => true,
     });
