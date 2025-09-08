@@ -64,20 +64,17 @@ function extractTraceId(extra?: Record<string, any>): string | undefined {
 
 async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
   try {
-    const traceId = extractTraceId(extra);
+    const traceId = extractTraceId(extra) || 'unknown';
 
     const labels: Record<string, string> = {
-      app: LOKI_APP,
-      env: LOKI_ENV,
+      job: LOKI_JOB,
       level,
+      trace_id: traceId, // 항상 라벨 포함
     };
-    if (traceId) {
-      labels['trace_id'] = traceId;
-    }
 
     const fields = { ...(extra || {}) };
     if (traceId && !fields.traceId) {
-      fields.traceId = traceId;
+      fields.traceId = traceId; // 라인 내용에도 포함(검색/가시성 향상용)
     }
 
     const fieldsText = Object.keys(fields).length ? ` | ${JSON.stringify(fields)}` : '';
