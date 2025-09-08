@@ -33,19 +33,15 @@ const LOKI_APP = process.env.LOKI_APP || 'gitlab-nextjs-demo';
 const LOKI_ENV = process.env.LOKI_ENV || process.env.NODE_ENV || 'development';
 const LOKI_USERNAME = process.env.LOKI_USERNAME;
 const LOKI_PASSWORD = process.env.LOKI_PASSWORD;
-const LOKI_BEARER_TOKEN = process.env.LOKI_BEARER_TOKEN;
 
 function getAuthHeaders() {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (LOKI_BEARER_TOKEN) {
-    headers['Authorization'] = `Bearer ${LOKI_BEARER_TOKEN}`;
-  } else if (LOKI_USERNAME && LOKI_PASSWORD) {
+  if (LOKI_USERNAME && LOKI_PASSWORD) {
     const token = Buffer.from(`${LOKI_USERNAME}:${LOKI_PASSWORD}`).toString('base64');
     headers['Authorization'] = `Basic ${token}`;
   }
   return headers;
 }
-
 // ns 타임스탬프 문자열
 function nowInNano(): string {
   const ms = Date.now();
@@ -69,6 +65,7 @@ function extractTraceId(extra?: Record<string, any>): string | undefined {
 async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
   try {
     const traceId = extractTraceId(extra);
+
     const labels: Record<string, string> = {
       app: LOKI_APP,
       env: LOKI_ENV,
@@ -78,31 +75,29 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
       labels['trace_id'] = traceId;
     }
 
-    // line: 메시지와 필드를 합쳐 단일 문자열(JSON)로 전송
-    const payloadLine = JSON.stringify({
-      msg: message,
-      ...extra,
-      level,
-      traceId,
-      time: new Date().toISOString(),
-    });
+    const fields = { ...(extra || {}) };
+    if (traceId && !fields.traceId) {
+      fields.traceId = traceId;
+    }
+
+    const fieldsText = Object.keys(fields).length ? ` | ${JSON.stringify(fields)}` : '';
+    const line = `${message}${fieldsText}`;
 
     const body = {
       streams: [
         {
           stream: labels,
-          values: [[nowInNano(), payloadLine]],
+          values: [[nowInNano(), line]],
         },
       ],
     };
 
     await axios.post(LOKI_URL, body, {
       headers: getAuthHeaders(),
-      timeout: 2000,
-      validateStatus: () => true,
+      timeout: 5000,
     });
   } catch (_) {
-    // Loki 전송 실패는 애플리케이션 흐름을 막지 않음
+    // 실패는 앱 흐름에 영향 주지 않음
   }
 }
 
