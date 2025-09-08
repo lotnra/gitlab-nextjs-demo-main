@@ -1,6 +1,6 @@
 // logging.ts (단일 파일 통합 예시)
 import pino from 'pino';
-import { trace } from './tracing';
+import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 
@@ -27,42 +27,113 @@ const logger = pino({
   timestamp: pino.stdTimeFunctions.isoTime,
 }, destination);
 
+// ---- Loki 전송 설정 ----
+const LOKI_URL = process.env.LOKI_URL || 'http://localhost:3100/loki/api/v1/push';
+const LOKI_APP = process.env.LOKI_APP || 'gitlab-nextjs-demo';
+const LOKI_ENV = process.env.LOKI_ENV || process.env.NODE_ENV || 'development';
+const LOKI_USERNAME = process.env.LOKI_USERNAME;
+const LOKI_PASSWORD = process.env.LOKI_PASSWORD;
+const LOKI_BEARER_TOKEN = process.env.LOKI_BEARER_TOKEN;
+
+function getAuthHeaders() {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (LOKI_BEARER_TOKEN) {
+    headers['Authorization'] = `Bearer ${LOKI_BEARER_TOKEN}`;
+  }
+  return headers;
+}
+
+// ns 타임스탬프 문자열
+function nowInNano(): string {
+  const ms = Date.now();
+  const ns = BigInt(ms) * 1000000n;
+  return ns.toString();
+}
+
+// tracer 또는 extra에서 traceId 추출
+function extractTraceId(extra?: Record<string, any>): string | undefined {
+  if (!extra) return undefined;
+  if (typeof extra.traceId === 'string') return extra.traceId;
+  const tracer = (extra as any).tracer;
+  try {
+    const span = tracer?.getActiveSpan?.();
+    const tid = span?.spanContext?.().traceId;
+    if (typeof tid === 'string' && tid.length > 0) return tid;
+  } catch (_) {}
+  return undefined;
+}
+
+async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
+  try {
+    const traceId = extractTraceId(extra);
+    const labels: Record<string, string> = {
+      app: LOKI_APP,
+      env: LOKI_ENV,
+      level,
+    };
+    if (traceId) {
+      labels['trace_id'] = traceId;
+    }
+
+    // line: 메시지와 필드를 합쳐 단일 문자열(JSON)로 전송
+    const payloadLine = JSON.stringify({
+      msg: message,
+      ...extra,
+      level,
+      traceId,
+      time: new Date().toISOString(),
+    });
+
+    const body = {
+      streams: [
+        {
+          stream: labels,
+          values: [[nowInNano(), payloadLine]],
+        },
+      ],
+    };
+
+    await axios.post(LOKI_URL, body, {
+      headers: getAuthHeaders(),
+      auth: !LOKI_BEARER_TOKEN && LOKI_USERNAME && LOKI_PASSWORD ? {
+        username: LOKI_USERNAME,
+        password: LOKI_PASSWORD,
+      } : undefined,
+      timeout: 2000,
+      validateStatus: () => true,
+    });
+  } catch (_) {
+    // Loki 전송 실패는 애플리케이션 흐름을 막지 않음
+  }
+}
+
 export const log = {
   debug: (message: string, extra?: Record<string, any>) => {
-    const span = trace.getActiveSpan();
-    const traceId = span?.spanContext().traceId;
-    const spanId = span?.spanContext().spanId;
-
-    logger.debug({ traceId, spanId, ...extra }, message);
+    const traceId = extractTraceId(extra);
+    logger.debug({ traceId, ...extra }, message);
+    void pushToLoki('debug', message, { ...extra, traceId });
   },
 
   info: (message: string, extra?: Record<string, any>) => {
-    const span = trace.getActiveSpan();
-    const traceId = span?.spanContext().traceId;
-    const spanId = span?.spanContext().spanId;
-
-    logger.info({ traceId, spanId, ...extra }, message);
+    const traceId = extractTraceId(extra);
+    logger.info({ traceId, ...extra }, message);
+    void pushToLoki('info', message, { ...extra, traceId });
   },
 
   warn: (message: string, extra?: Record<string, any>) => {
-    const span = trace.getActiveSpan();
-    const traceId = span?.spanContext().traceId;
-    const spanId = span?.spanContext().spanId;
-
-    logger.warn({ traceId, spanId, ...extra }, message);
+    const traceId = extractTraceId(extra);
+    logger.warn({ traceId, ...extra }, message);
+    void pushToLoki('warn', message, { ...extra, traceId });
   },
 
   error: (message: string, error?: Error, extra?: Record<string, any>) => {
-    const span = trace.getActiveSpan();
-    const traceId = span?.spanContext().traceId;
-    const spanId = span?.spanContext().spanId;
+    const traceId = extractTraceId(extra);
+    const errObj = error
+      ? { name: error.name, message: error.message, stack: error.stack }
+      : undefined;
 
-    logger.error({
-      traceId,
-      spanId,
-      error: error ? { name: error.name, message: error.message, stack: error.stack } : undefined,
-      ...extra,
-    }, message);
+    logger.error({ traceId, error: errObj, ...extra }, message);
+    void pushToLoki('error', message, { error: errObj, ...extra, traceId });
   },
 };
 
@@ -75,6 +146,7 @@ export function createRequestLogger(requestId: string, userId?: string) {
   };
 }
 
+// 트레이싱 제거: withLogging은 단순 로깅 래퍼로 동작
 export async function withLogging<T>(
   operation: string,
   fn: (logger: ReturnType<typeof createRequestLogger>) => Promise<T>
@@ -82,21 +154,15 @@ export async function withLogging<T>(
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const requestLogger = createRequestLogger(requestId);
 
-  return trace.getTracer('gitlab-demo-app').startActiveSpan(operation, async (span) => {
-    try {
-      requestLogger.info(`Starting ${operation}`);
-      const result = await fn(requestLogger);
-      requestLogger.info(`Completed ${operation}`);
-      span.setStatus({ code: 1 });
-      return result;
-    } catch (error) {
-      requestLogger.error(`Failed ${operation}`, error as Error);
-      span.setStatus({ code: 2, message: (error as Error).message });
-      throw error;
-    } finally {
-      span.end();
-    }
-  });
+  try {
+    requestLogger.info(`Starting ${operation}`);
+    const result = await fn(requestLogger);
+    requestLogger.info(`Completed ${operation}`);
+    return result;
+  } catch (error) {
+    requestLogger.error(`Failed ${operation}`, error as Error);
+    throw error;
+  }
 }
 
 export default logger;
