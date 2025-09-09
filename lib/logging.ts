@@ -136,13 +136,14 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
     
     // traceID가 있을 때만 labels에 추가
     if (traceId) {
-      labels['trace_id'] = traceId;
+      labels['traceId'] = traceId;
     }
     
     const fields = { ...(extra || {}) };
-    // 조건문 수정: traceId가 있으면 무조건 추가 (기존 traceId가 있어도 덮어쓰기)
+    // 기존 traceId가 있으면 제거하고 새로 추가 (중복 방지)
     if (traceId) {
-      fields.traceId = traceId; // 라인 내용에도 포함(검색/가시성 향상용)
+      delete fields.traceId;  // 기존 traceId 제거
+      fields.traceId = traceId; // 새로 추가
     }
 
     const fieldsText = Object.keys(fields).length ? ` | ${JSON.stringify(fields)}` : '';
@@ -194,7 +195,8 @@ export const log = {
   info: (message: string, extra?: Record<string, any>) => {
     const traceId = getTraceIdForLogging(extra);
     logger.info({ traceId, ...extra }, message);
-    void pushToLoki('info', message, { ...extra, traceId });
+    // extra에 이미 traceId가 있으면 중복 추가하지 않음
+    void pushToLoki('info', message, extra);
   },
 
   /**
