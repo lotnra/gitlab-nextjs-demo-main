@@ -5,18 +5,25 @@ import path from 'path';
 import { getCurrentTraceId } from './tracing';
 
 // ---- Pino: 파일 로깅 설정 ----
+
+/**
+ * 로그 디렉토리가 존재하지 않으면 생성하는 유틸리티 함수
+ * @param dirPath 생성할 디렉토리 경로
+ */
 function ensureDirectoryExists(dirPath: string) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
 }
 
+// 로그 파일 설정
 const logDirectory = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
 const logFileName = process.env.LOG_FILE || 'app.log';
 const logFilePath = path.join(logDirectory, logFileName);
 
 ensureDirectoryExists(logDirectory);
 
+// Pino 로거 설정 (파일 출력용)
 const destination = pino.destination({ dest: logFilePath, sync: false });
 
 const logger = pino({
@@ -35,6 +42,10 @@ const LOKI_JOB = process.env.LOKI_JOB || LOKI_APP;
 const LOKI_USERNAME = process.env.LOKI_USERNAME;
 const LOKI_PASSWORD = process.env.LOKI_PASSWORD;
 
+/**
+ * Loki 인증 헤더를 생성하는 함수
+ * @returns 인증 헤더 객체
+ */
 function getAuthHeaders() {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (LOKI_USERNAME && LOKI_PASSWORD) {
@@ -44,14 +55,22 @@ function getAuthHeaders() {
   return headers;
 }
 
-// ns 타임스탬프 문자열
+/**
+ * 현재 시간을 나노초 단위 문자열로 변환하는 함수
+ * @returns 나노초 단위 타임스탬프 문자열
+ */
 function nowInNano(): string {
   const ms = Date.now();
   const ns = BigInt(ms) * 1000000n;
   return ns.toString();
 }
 
-// 로그 수집 시점에서 traceID 확인
+/**
+ * 로그 수집 시점에서 traceID를 추출하는 함수
+ * 여러 소스에서 traceID를 찾아 반환 (우선순위 순)
+ * @param extra 추가 데이터 객체
+ * @returns traceID 문자열 또는 undefined
+ */
 function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
   // 1. 먼저 현재 활성 span에서 traceID를 가져옴
   const currentTraceId = getCurrentTraceId();
@@ -90,6 +109,12 @@ function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
   return undefined;
 }
 
+/**
+ * 로그를 Loki로 전송하는 함수
+ * @param level 로그 레벨
+ * @param message 로그 메시지
+ * @param extra 추가 데이터
+ */
 async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
   try {
     const traceId = getTraceIdForLogging(extra);
@@ -132,25 +157,50 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
   }
 }
 
+/**
+ * 로그 객체 - 파일과 Loki에 동시 로깅
+ * 각 레벨별로 traceID를 자동으로 추출하여 로깅
+ */
 export const log = {
+  /**
+   * 디버그 레벨 로그
+   * @param message 로그 메시지
+   * @param extra 추가 데이터
+   */
   debug: (message: string, extra?: Record<string, any>) => {
     const traceId = getTraceIdForLogging(extra);
     logger.debug({ traceId, ...extra }, message);
     void pushToLoki('debug', message, { ...extra, traceId });
   },
 
+  /**
+   * 정보 레벨 로그
+   * @param message 로그 메시지
+   * @param extra 추가 데이터
+   */
   info: (message: string, extra?: Record<string, any>) => {
     const traceId = getTraceIdForLogging(extra);
     logger.info({ traceId, ...extra }, message);
     void pushToLoki('info', message, { ...extra, traceId });
   },
 
+  /**
+   * 경고 레벨 로그
+   * @param message 로그 메시지
+   * @param extra 추가 데이터
+   */
   warn: (message: string, extra?: Record<string, any>) => {
     const traceId = getTraceIdForLogging(extra);
     logger.warn({ traceId, ...extra }, message);
     void pushToLoki('warn', message, { ...extra, traceId });
   },
 
+  /**
+   * 에러 레벨 로그
+   * @param message 로그 메시지
+   * @param error 에러 객체
+   * @param extra 추가 데이터
+   */
   error: (message: string, error?: Error, extra?: Record<string, any>) => {
     const traceId = getTraceIdForLogging(extra);
     const errObj = error
@@ -162,6 +212,14 @@ export const log = {
   },
 };
 
+/**
+ * 요청별 로거를 생성하는 함수
+ * requestId, userId, traceId를 자동으로 포함한 로거 반환
+ * @param requestId 요청 ID
+ * @param userId 사용자 ID (선택사항)
+ * @param traceId 추적 ID (선택사항, 없으면 현재 활성 span에서 추출)
+ * @returns 요청별 로거 객체
+ */
 export function createRequestLogger(requestId: string, userId?: string, traceId?: string) {
   // traceId가 제공되지 않으면 현재 활성 span에서 추출
   const actualTraceId = traceId || getCurrentTraceId();
@@ -174,6 +232,13 @@ export function createRequestLogger(requestId: string, userId?: string, traceId?
   };
 }
 
+/**
+ * 로깅과 함께 비동기 작업을 실행하는 헬퍼 함수
+ * 작업 시작/완료/실패를 자동으로 로깅
+ * @param operation 작업 이름
+ * @param fn 실행할 비동기 함수
+ * @returns 함수 실행 결과
+ */
 export async function withLogging<T>(
   operation: string,
   fn: (logger: ReturnType<typeof createRequestLogger>) => Promise<T>
