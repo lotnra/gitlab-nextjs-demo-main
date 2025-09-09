@@ -4,6 +4,53 @@ import fs from 'fs';
 import path from 'path';
 import { getCurrentTraceId } from './tracing';
 
+// ---- Pino: 파일 로깅 설정 ----
+function ensureDirectoryExists(dirPath: string) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+const logDirectory = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
+const logFileName = process.env.LOG_FILE || 'app.log';
+const logFilePath = path.join(logDirectory, logFileName);
+
+ensureDirectoryExists(logDirectory);
+
+const destination = pino.destination({ dest: logFilePath, sync: false });
+
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  formatters: {
+    level: (label: string) => ({ level: label }),
+  },
+  timestamp: pino.stdTimeFunctions.isoTime,
+}, destination);
+
+// ---- Loki 전송 설정 ----
+const LOKI_URL = process.env.LOKI_URL || 'http://localhost:3100/loki/api/v1/push';
+const LOKI_APP = process.env.LOKI_APP || 'gitlab-nextjs-demo';
+const LOKI_ENV = process.env.LOKI_ENV || process.env.NODE_ENV || 'development';
+const LOKI_JOB = process.env.LOKI_JOB || LOKI_APP;
+const LOKI_USERNAME = process.env.LOKI_USERNAME;
+const LOKI_PASSWORD = process.env.LOKI_PASSWORD;
+
+function getAuthHeaders() {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (LOKI_USERNAME && LOKI_PASSWORD) {
+    const token = Buffer.from(`${LOKI_USERNAME}:${LOKI_PASSWORD}`).toString('base64');
+    headers['Authorization'] = `Basic ${token}`;
+  }
+  return headers;
+}
+
+// ns 타임스탬프 문자열
+function nowInNano(): string {
+  const ms = Date.now();
+  const ns = BigInt(ms) * 1000000n;
+  return ns.toString();
+}
+
 // 로그 수집 시점에서 traceID 확인
 function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
   // 1. 먼저 현재 활성 span에서 traceID를 가져옴
@@ -43,7 +90,6 @@ function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
   return undefined;
 }
 
-// 기존 extractTraceId 함수를 getTraceIdForLogging으로 교체
 async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
   try {
     const traceId = getTraceIdForLogging(extra);
