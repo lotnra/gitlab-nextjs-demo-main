@@ -74,6 +74,8 @@ function nowInNano(): string {
 function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
   // 1. 먼저 현재 활성 span에서 traceID를 가져옴
   const currentTraceId = getCurrentTraceId();
+  console.log('getTraceIdForLogging - currentTraceId:', currentTraceId);
+  
   if (currentTraceId) {
     return currentTraceId;
   }
@@ -81,6 +83,8 @@ function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
   // 2. 없으면 extra에서 찾기
   if (!extra) return undefined;
 
+  console.log('getTraceIdForLogging - extra:', extra);
+  
   // direct fields
   if (typeof extra.traceId === 'string' && extra.traceId) return extra.traceId;
   if (typeof (extra as any).traceID === 'string') return (extra as any).traceID;
@@ -118,6 +122,10 @@ function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
 async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
   try {
     const traceId = getTraceIdForLogging(extra);
+    
+    // 디버깅용 로그 추가
+    console.log('pushToLoki - traceId:', traceId);
+    console.log('pushToLoki - extra:', extra);
 
     const labels: Record<string, string> = {
       job: LOKI_JOB,
@@ -132,12 +140,17 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
     }
     
     const fields = { ...(extra || {}) };
-    if (traceId && !fields.traceId) {
+    // 조건문 수정: traceId가 있으면 무조건 추가 (기존 traceId가 있어도 덮어쓰기)
+    if (traceId) {
       fields.traceId = traceId; // 라인 내용에도 포함(검색/가시성 향상용)
     }
 
     const fieldsText = Object.keys(fields).length ? ` | ${JSON.stringify(fields)}` : '';
     const line = `${message}${fieldsText}`;
+
+    // 디버깅용 로그 추가
+    console.log('pushToLoki - final fields:', fields);
+    console.log('pushToLoki - final line:', line);
 
     const body = {
       streams: [
