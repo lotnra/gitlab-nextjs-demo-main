@@ -1,57 +1,18 @@
-// logging.ts (단일 파일 통합 예시)
 import pino from 'pino';
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
+import { getCurrentTraceId } from './tracing';
 
-// ---- Pino: 파일 로깅 설정 ----
-function ensureDirectoryExists(dirPath: string) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
+// 로그 수집 시점에서 traceID 확인
+function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
+  // 1. 먼저 현재 활성 span에서 traceID를 가져옴
+  const currentTraceId = getCurrentTraceId();
+  if (currentTraceId) {
+    return currentTraceId;
   }
-}
 
-const logDirectory = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
-const logFileName = process.env.LOG_FILE || 'app.log';
-const logFilePath = path.join(logDirectory, logFileName);
-
-ensureDirectoryExists(logDirectory);
-
-const destination = pino.destination({ dest: logFilePath, sync: false });
-
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  formatters: {
-    level: (label: string) => ({ level: label }),
-  },
-  timestamp: pino.stdTimeFunctions.isoTime,
-}, destination);
-
-// ---- Loki 전송 설정 ----
-const LOKI_URL = process.env.LOKI_URL || 'http://localhost:3100/loki/api/v1/push';
-const LOKI_APP = process.env.LOKI_APP || 'gitlab-nextjs-demo';
-const LOKI_ENV = process.env.LOKI_ENV || process.env.NODE_ENV || 'development';
-const LOKI_JOB = process.env.LOKI_JOB || LOKI_APP; // ← 누락된 정의 추가
-const LOKI_USERNAME = process.env.LOKI_USERNAME;
-const LOKI_PASSWORD = process.env.LOKI_PASSWORD;
-
-function getAuthHeaders() {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (LOKI_USERNAME && LOKI_PASSWORD) {
-    const token = Buffer.from(`${LOKI_USERNAME}:${LOKI_PASSWORD}`).toString('base64');
-    headers['Authorization'] = `Basic ${token}`;
-  }
-  return headers;
-}
-// ns 타임스탬프 문자열
-function nowInNano(): string {
-  const ms = Date.now();
-  const ns = BigInt(ms) * 1000000n;
-  return ns.toString();
-}
-
-// tracer 또는 extra에서 traceId 추출
-function extractTraceId(extra?: Record<string, any>): string | undefined {
+  // 2. 없으면 extra에서 찾기
   if (!extra) return undefined;
 
   // direct fields
@@ -79,28 +40,26 @@ function extractTraceId(extra?: Record<string, any>): string | undefined {
     if (tid && /^[0-9a-f]{16,32}$/i.test(tid)) return tid;
   }
 
-  // 호환: tracer 객체가 있으면 시도
-  try {
-    const tracer = (extra as any).tracer;
-    const span = tracer?.getActiveSpan?.();
-    const tid = span?.spanContext?.().traceId;
-    if (typeof tid === 'string' && tid) return tid;
-  } catch {}
-
   return undefined;
 }
 
+// 기존 extractTraceId 함수를 getTraceIdForLogging으로 교체
 async function pushToLoki(level: string, message: string, extra?: Record<string, any>) {
   try {
-    const traceId = extractTraceId(extra);
+    const traceId = getTraceIdForLogging(extra);
 
     const labels: Record<string, string> = {
       job: LOKI_JOB,
       level,
-      app: LOKI_APP,   // 옵션
-      env: LOKI_ENV,   // 옵션
+      app: LOKI_APP,
+      env: LOKI_ENV,
     };
-    if (traceId) labels['trace_id'] = traceId;
+    
+    // traceID가 있을 때만 labels에 추가
+    if (traceId) {
+      labels['trace_id'] = traceId;
+    }
+    
     const fields = { ...(extra || {}) };
     if (traceId && !fields.traceId) {
       fields.traceId = traceId; // 라인 내용에도 포함(검색/가시성 향상용)
@@ -129,25 +88,25 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
 
 export const log = {
   debug: (message: string, extra?: Record<string, any>) => {
-    const traceId = extractTraceId(extra);
+    const traceId = getTraceIdForLogging(extra);
     logger.debug({ traceId, ...extra }, message);
     void pushToLoki('debug', message, { ...extra, traceId });
   },
 
   info: (message: string, extra?: Record<string, any>) => {
-    const traceId = extractTraceId(extra);
+    const traceId = getTraceIdForLogging(extra);
     logger.info({ traceId, ...extra }, message);
     void pushToLoki('info', message, { ...extra, traceId });
   },
 
   warn: (message: string, extra?: Record<string, any>) => {
-    const traceId = extractTraceId(extra);
+    const traceId = getTraceIdForLogging(extra);
     logger.warn({ traceId, ...extra }, message);
     void pushToLoki('warn', message, { ...extra, traceId });
   },
 
   error: (message: string, error?: Error, extra?: Record<string, any>) => {
-    const traceId = extractTraceId(extra);
+    const traceId = getTraceIdForLogging(extra);
     const errObj = error
       ? { name: error.name, message: error.message, stack: error.stack }
       : undefined;
@@ -158,21 +117,24 @@ export const log = {
 };
 
 export function createRequestLogger(requestId: string, userId?: string, traceId?: string) {
+  // traceId가 제공되지 않으면 현재 활성 span에서 추출
+  const actualTraceId = traceId || getCurrentTraceId();
+  
   return {
-    debug: (m: string, e?: Record<string, any>) => log.debug(m, { requestId, userId, traceId, ...e }),
-    info:  (m: string, e?: Record<string, any>) => log.info(m,  { requestId, userId, traceId, ...e }),
-    warn:  (m: string, e?: Record<string, any>) => log.warn(m,  { requestId, userId, traceId, ...e }),
-    error: (m: string, err?: Error, e?: Record<string, any>) => log.error(m, err, { requestId, userId, traceId, ...e }),
+    debug: (m: string, e?: Record<string, any>) => log.debug(m, { requestId, userId, traceId: actualTraceId, ...e }),
+    info:  (m: string, e?: Record<string, any>) => log.info(m,  { requestId, userId, traceId: actualTraceId, ...e }),
+    warn:  (m: string, e?: Record<string, any>) => log.warn(m,  { requestId, userId, traceId: actualTraceId, ...e }),
+    error: (m: string, err?: Error, e?: Record<string, any>) => log.error(m, err, { requestId, userId, traceId: actualTraceId, ...e }),
   };
 }
 
-// 트레이싱 제거: withLogging은 단순 로깅 래퍼로 동작
 export async function withLogging<T>(
   operation: string,
   fn: (logger: ReturnType<typeof createRequestLogger>) => Promise<T>
 ): Promise<T> {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const requestLogger = createRequestLogger(requestId);
+  const traceId = getCurrentTraceId(); // 현재 traceID 추출
+  const requestLogger = createRequestLogger(requestId, undefined, traceId);
 
   try {
     requestLogger.info(`Starting ${operation}`);
