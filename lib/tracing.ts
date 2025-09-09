@@ -8,6 +8,7 @@ export { trace };
 
 /**
  * 새로운 span을 생성하고 비동기 함수를 실행하는 헬퍼 함수
+ * 현재 활성 span이 있으면 새로운 span을 생성하지 않고 기존 span을 재사용
  * span의 생명주기를 자동으로 관리하고 성공/실패 상태를 설정
  * 
  * @param name span 이름
@@ -23,22 +24,32 @@ export { trace };
  * ```
  */
 export function createSpan(name: string, fn: (span: any) => Promise<any>) {
-  return tracer.startActiveSpan(name, async (span) => {
-    try {
-      // 비즈니스 로직 실행
-      const result = await fn(span);
-      // 성공 상태 설정 (code: 1 = OK)
-      span.setStatus({ code: 1 });
-      return result;
-    } catch (error) {
-      // 에러 상태 설정 (code: 2 = ERROR)
-      span.setStatus({ code: 2, message: error.message });
-      throw error;
-    } finally {
-      // span 종료 (반드시 실행)
-      span.end();
-    }
-  });
+  // 현재 활성 span이 있는지 확인
+  const activeSpan = trace.getActiveSpan();
+  
+  if (activeSpan) {
+    // 활성 span이 있으면 새로운 span을 생성하지 않고 기존 span을 사용
+    // 단, 기존 span에 속성만 추가
+    return fn(activeSpan);
+  } else {
+    // 활성 span이 없으면 새로운 span 생성
+    return tracer.startActiveSpan(name, async (span) => {
+      try {
+        // 비즈니스 로직 실행
+        const result = await fn(span);
+        // 성공 상태 설정 (code: 1 = OK)
+        span.setStatus({ code: 1 });
+        return result;
+      } catch (error) {
+        // 에러 상태 설정 (code: 2 = ERROR)
+        span.setStatus({ code: 2, message: error.message });
+        throw error;
+      } finally {
+        // span 종료 (반드시 실행)
+        span.end();
+      }
+    });
+  }
 }
 
 /**

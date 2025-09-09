@@ -87,7 +87,7 @@ function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
   
   // direct fields
   if (typeof extra.traceId === 'string' && extra.traceId) return extra.traceId;
-  if (typeof (extra as any).traceID === 'string') return (extra as any).traceID;
+//  if (typeof (extra as any).traceID === 'string') return (extra as any).traceID;
 
   // headers object 내에서 찾기
   const headers = (extra as any).headers || (extra as any).req?.headers;
