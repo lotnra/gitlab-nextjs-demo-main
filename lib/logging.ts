@@ -133,17 +133,15 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
       env: LOKI_ENV,
     };
     
-    // traceID가 있을 때만 labels에 추가 (traceID로 통일)
+    // traceID가 있을 때만 labels에 추가
     if (traceId) {
       labels['traceID'] = traceId;
     }
     
     const fields = { ...(extra || {}) };
-    // 기존 traceId, trace_id 제거하고 traceID로 통일
-    if (traceId) {
-      delete fields.traceId;    // 기존 traceId 제거
-      delete fields.trace_id;   // 기존 trace_id 제거
-      fields.traceID = traceId; // traceID로 통일
+    // extra에 traceID가 없을 때만 추가 (중복 방지)
+    if (traceId && !fields.traceID) {
+      fields.traceID = traceId;
     }
 
     const fieldsText = Object.keys(fields).length ? ` | ${JSON.stringify(fields)}` : '';
