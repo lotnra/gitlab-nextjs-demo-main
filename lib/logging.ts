@@ -88,7 +88,6 @@ function getTraceIdForLogging(extra?: Record<string, any>): string | undefined {
   // direct fields
   if (typeof extra.traceId === 'string' && extra.traceId) return extra.traceId;
   if (typeof (extra as any).traceID === 'string') return (extra as any).traceID;
-  if (typeof (extra as any).trace_id === 'string') return (extra as any).trace_id;
 
   // headers object 내에서 찾기
   const headers = (extra as any).headers || (extra as any).req?.headers;
@@ -134,16 +133,17 @@ async function pushToLoki(level: string, message: string, extra?: Record<string,
       env: LOKI_ENV,
     };
     
-    // traceID가 있을 때만 labels에 추가
+    // traceID가 있을 때만 labels에 추가 (traceID로 통일)
     if (traceId) {
-      labels['traceId'] = traceId;
+      labels['traceID'] = traceId;
     }
     
     const fields = { ...(extra || {}) };
-    // 기존 traceId가 있으면 제거하고 새로 추가 (중복 방지)
+    // 기존 traceId, trace_id 제거하고 traceID로 통일
     if (traceId) {
-      delete fields.traceId;  // 기존 traceId 제거
-      fields.traceId = traceId; // 새로 추가
+      delete fields.traceId;    // 기존 traceId 제거
+      delete fields.trace_id;   // 기존 trace_id 제거
+      fields.traceID = traceId; // traceID로 통일
     }
 
     const fieldsText = Object.keys(fields).length ? ` | ${JSON.stringify(fields)}` : '';
@@ -183,8 +183,8 @@ export const log = {
    */
   debug: (message: string, extra?: Record<string, any>) => {
     const traceId = getTraceIdForLogging(extra);
-    logger.debug({ traceId, ...extra }, message);
-    void pushToLoki('debug', message, { ...extra, traceId });
+    logger.debug({ traceID: traceId, ...extra }, message);
+    void pushToLoki('debug', message, extra);
   },
 
   /**
@@ -194,8 +194,7 @@ export const log = {
    */
   info: (message: string, extra?: Record<string, any>) => {
     const traceId = getTraceIdForLogging(extra);
-    logger.info({ traceId, ...extra }, message);
-    // extra에 이미 traceId가 있으면 중복 추가하지 않음
+    logger.info({ traceID: traceId, ...extra }, message);
     void pushToLoki('info', message, extra);
   },
 
@@ -206,8 +205,8 @@ export const log = {
    */
   warn: (message: string, extra?: Record<string, any>) => {
     const traceId = getTraceIdForLogging(extra);
-    logger.warn({ traceId, ...extra }, message);
-    void pushToLoki('warn', message, { ...extra, traceId });
+    logger.warn({ traceID: traceId, ...extra }, message);
+    void pushToLoki('warn', message, extra);
   },
 
   /**
@@ -222,14 +221,14 @@ export const log = {
       ? { name: error.name, message: error.message, stack: error.stack }
       : undefined;
 
-    logger.error({ traceId, error: errObj, ...extra }, message);
-    void pushToLoki('error', message, { error: errObj, ...extra, traceId });
+    logger.error({ traceID: traceId, error: errObj, ...extra }, message);
+    void pushToLoki('error', message, { error: errObj, ...extra });
   },
 };
 
 /**
  * 요청별 로거를 생성하는 함수
- * requestId, userId, traceId를 자동으로 포함한 로거 반환
+ * requestId, userId, traceID를 자동으로 포함한 로거 반환
  * @param requestId 요청 ID
  * @param userId 사용자 ID (선택사항)
  * @param traceId 추적 ID (선택사항, 없으면 현재 활성 span에서 추출)
@@ -240,10 +239,10 @@ export function createRequestLogger(requestId: string, userId?: string, traceId?
   const actualTraceId = traceId || getCurrentTraceId();
   
   return {
-    debug: (m: string, e?: Record<string, any>) => log.debug(m, { requestId, userId, traceId: actualTraceId, ...e }),
-    info:  (m: string, e?: Record<string, any>) => log.info(m,  { requestId, userId, traceId: actualTraceId, ...e }),
-    warn:  (m: string, e?: Record<string, any>) => log.warn(m,  { requestId, userId, traceId: actualTraceId, ...e }),
-    error: (m: string, err?: Error, e?: Record<string, any>) => log.error(m, err, { requestId, userId, traceId: actualTraceId, ...e }),
+    debug: (m: string, e?: Record<string, any>) => log.debug(m, { requestId, userId, traceID: actualTraceId, ...e }),
+    info:  (m: string, e?: Record<string, any>) => log.info(m,  { requestId, userId, traceID: actualTraceId, ...e }),
+    warn:  (m: string, e?: Record<string, any>) => log.warn(m,  { requestId, userId, traceID: actualTraceId, ...e }),
+    error: (m: string, err?: Error, e?: Record<string, any>) => log.error(m, err, { requestId, userId, traceID: actualTraceId, ...e }),
   };
 }
 
