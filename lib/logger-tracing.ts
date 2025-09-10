@@ -15,19 +15,12 @@ export async function createSpan<T>(
   name: string,
   fn: (span: Span, traceId: string) => Promise<T>
 ): Promise<T> {
-  const activeSpan = trace.getActiveSpan();
-
-  if (activeSpan) {
-    // 이미 활성 span이 있으면 그대로 사용
-    const traceId = activeSpan.spanContext().traceId;
-    return fn(activeSpan, traceId);
-  }
-
+  // 무조건 새로운 span 생성
   return tracer.startActiveSpan(name, async (span) => {
     const traceId = span.spanContext().traceId;
     try {
       const result = await fn(span, traceId);
-      span.setStatus({ code: 1 });
+      span.setStatus({ code: 1 }); // 성공
       return result;
     } catch (error: any) {
       span.setStatus({ code: 2, message: error.message });
