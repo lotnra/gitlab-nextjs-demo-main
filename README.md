@@ -31,7 +31,7 @@ npm i -D @types/bcryptjs @types/jsonwebtoken
 MONGODB_URI=mongodb://root:example@localhost:27017
 MONGODB_DB=app
 JWT_SECRET=change-this
-머
+
 ```
 
 JWT_SECRET 값에는 임의의 값을 넣어줍니다.
