@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import clientPromise from '@/lib/database';
 import { getUserFromRequest } from '@/lib/auth';
-import { withLogging, createSpan } from '@/lib/logger-tracing';
+import { withLogging, createSpan, createManualLogger } from '@/lib/logger-tracing';
 import { ObjectId } from 'mongodb';
 
 // ---------------- GET: 게시글 목록 조회 ----------------
@@ -21,8 +21,10 @@ export async function GET(req: NextRequest) {
 
     logger.info('게시글 목록 조회 완료', { count: list.length });
 
-    // span attribute 추가 가능
-    await createSpan('posts.list.result', async (span) => {
+    // 수동 span 생성 및 로그 연동
+    await createSpan('posts.list.result', async (span, traceId) => {
+      const spanLogger = createManualLogger(traceId);
+      spanLogger.info('게시글 결과 span 기록', { count: list.length });
       span.setAttribute('posts.count', list.length);
     });
 
@@ -52,15 +54,17 @@ export async function POST(req: NextRequest) {
 
     const now = new Date();
     const doc = { title, content, authorId: user.id, authorEmail: user.email, createdAt: now, updatedAt: now };
-    const result = await posts.insertOne(doc);
-
-    logger.info('게시글 작성 완료', { postId: String(result.insertedId), title: title.substring(0, 50) });
-
-    // 내부 span 생성 가능
-    await createSpan('posts.create.db', async (span) => {
-      span.addEvent('posts.inserted', { insertedId: String(result.insertedId) });
+    
+    // DB 삽입 단계는 수동 span 사용
+    const result = await createSpan('posts.create.db', async (span, traceId) => {
+      const spanLogger = createManualLogger(traceId);
+      const res = await posts.insertOne(doc);
+      spanLogger.info('게시글 DB 삽입 완료', { postId: String(res.insertedId) });
+      span.addEvent('posts.inserted', { insertedId: String(res.insertedId) });
+      return res;
     });
 
+    logger.info('게시글 작성 완료', { postId: String(result.insertedId), title: title.substring(0, 50) });
     return NextResponse.json({ ok: true, id: result.insertedId });
   });
 }
@@ -83,22 +87,19 @@ export async function DELETE(req: NextRequest) {
     const client = await clientPromise;
     const posts = client.db(process.env.MONGODB_DB || 'app').collection('posts');
 
-    let result;
-    if (ids?.length) {
-      const objectIds = ids.map((id: string) => new ObjectId(id));
-      result = await posts.deleteMany({ _id: { $in: objectIds }, authorId: user.id });
-    } else {
-      result = await posts.deleteMany({ authorId: user.id });
-    }
-
-    logger.info('게시글 삭제 완료', {
-      deletedCount: result.deletedCount,
-      deleteType: ids?.length ? 'selected' : 'all'
-    });
-
-    // 내부 span 생성 가능
-    await createSpan('posts.delete.db', async (span) => {
-      span.addEvent('posts.deleted', { deletedCount: result.deletedCount, userId: user.id });
+    // 삭제 단계 수동 span으로 계측
+    const result = await createSpan('posts.delete.db', async (span, traceId) => {
+      const spanLogger = createManualLogger(traceId);
+      let res;
+      if (ids?.length) {
+        const objectIds = ids.map((id: string) => new ObjectId(id));
+        res = await posts.deleteMany({ _id: { $in: objectIds }, authorId: user.id });
+      } else {
+        res = await posts.deleteMany({ authorId: user.id });
+      }
+      spanLogger.info('게시글 삭제 완료', { deletedCount: res.deletedCount, deleteType: ids?.length ? 'selected' : 'all' });
+      span.addEvent('posts.deleted', { deletedCount: res.deletedCount, userId: user.id });
+      return res;
     });
 
     return NextResponse.json({

@@ -37,7 +37,7 @@ const provider = new NodeTracerProvider({
   // Span 처리기 설정 (SimpleSpanProcessor: 동기식 처리)
   spanProcessors: [new SimpleSpanProcessor(exporter)],
   // 샘플링 전략: 10%의 요청만 추적 (성능과 관찰성의 균형)
-  sampler: new TraceIdRatioBasedSampler(0.1),
+  sampler: new TraceIdRatioBasedSampler(0.5),
 });
 
 // ---- OpenTelemetry 초기화 ----
